@@ -1,0 +1,15 @@
+{
+  "model_size": "base.en",
+  "input_device": null,
+  "language": "en",
+  "hotkey": "f8",
+  "hold_to_talk": true,
+  "device": "cpu",
+  "compute_type": "int8",
+  "paste_mode": "paste",
+  "vocabulary": [],
+  "ai_cleanup": {
+    "enabled": false,
+    "model": "claude-haiku-4-5"
+  }
+}
