@@ -80,3 +80,8 @@ windowless via `pythonw`).
 
 - Windows-only as shipped (`winsound`, WASAPI handling, shortcuts).
 - Latency on CPU: `base.en` ≈ 0.5–1.5s per sentence, `small.en` ≈ 2–3s.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Third-party dependency licenses (including one
+LGPL component) are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
