@@ -12,7 +12,10 @@ import socket
 import sys
 import threading
 import time
+import webbrowser
 from pathlib import Path
+
+VERSION = "1.1.0"
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -34,9 +37,18 @@ from whisperflow.recorder import Recorder
 from whisperflow.transcriber import Transcriber
 from whisperflow.formatter import basic_format, AIFormatter
 from whisperflow.injector import inject
+from whisperflow.updater import check_for_update
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
-LOG_PATH = Path(__file__).parent / "whisperflow.log"
+# When frozen by PyInstaller, user files (config, log) live next to the exe;
+# bundled read-only assets live in the _internal dir (sys._MEIPASS).
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).parent
+else:
+    BASE_DIR = Path(__file__).parent
+ASSET_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+
+CONFIG_PATH = BASE_DIR / "config.json"
+LOG_PATH = BASE_DIR / "whisperflow.log"
 MODEL_CHOICES = ["tiny.en", "base.en", "small.en", "medium", "large-v3"]
 
 
@@ -112,11 +124,12 @@ class App:
         self._register_hotkey()
         self._load_model_async()
         self._init_ai_cleanup()
+        self._check_updates_async()
 
     # ------------------------------------------------------------------ UI
 
     def _build_ui(self):
-        self.root.title("WhisperFlow Local")
+        self.root.title(f"WhisperFlow Local v{VERSION}")
         self.root.resizable(False, False)
         self.root.attributes("-topmost", False)
         pad = {"padx": 10, "pady": 4}
@@ -207,6 +220,15 @@ class App:
                                    command=self._save)
         self.save_btn.grid(row=10, column=0, columnspan=3, pady=(10, 2))
 
+        # Update notice — populated by the background check when a newer
+        # GitHub release exists; clicking opens the release page.
+        self._update_url = None
+        self.update_var = tk.StringVar(value="")
+        update_lbl = ttk.Label(frame, textvariable=self.update_var,
+                               foreground="#0a58ca", cursor="hand2")
+        update_lbl.grid(row=11, column=0, columnspan=3, pady=(0, 2))
+        update_lbl.bind("<Button-1>", self._open_update)
+
         # Closing the window hides to the tray; quit from the tray menu.
         self.root.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
 
@@ -216,6 +238,32 @@ class App:
             if transcript is not None:
                 self.transcript_var.set(transcript)
         self.root.after(0, apply)
+
+    # ------------------------------------------------------------- updates
+
+    def _check_updates_async(self):
+        def worker():
+            try:
+                result = check_for_update(VERSION)
+            except Exception:
+                return  # offline, private repo without token, etc. — stay quiet
+            if not result:
+                return
+            latest, url = result
+            self._update_url = url
+            self.root.after(0, lambda: self.update_var.set(
+                f"Update v{latest} available — click to download"))
+            try:
+                self.tray.notify(f"Version {latest} is available.",
+                                 "WhisperFlow Local update")
+            except Exception:
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _open_update(self, _event=None):
+        if self._update_url:
+            webbrowser.open(self._update_url)
 
     # ---------------------------------------------------------------- tray
 
@@ -458,7 +506,7 @@ def main():
         return 0
 
     if not CONFIG_PATH.exists():  # fresh install — seed from the example
-        example = Path(__file__).parent / "config.example.json"
+        example = ASSET_DIR / "config.example.json"
         CONFIG_PATH.write_text(example.read_text(encoding="utf-8"),
                                encoding="utf-8")
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))

@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 config.json
 whisperflow.log
+build/
+dist/
+*.spec
+*.zip
