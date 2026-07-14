@@ -96,6 +96,13 @@ SINGLE_INSTANCE_PORT = 47821
 DEFAULT_MIC_LABEL = "System default"
 
 
+def _set_window_icon(root: tk.Tk):
+    try:
+        root.iconbitmap(str(ASSET_DIR / "icon.ico"))
+    except Exception:
+        pass
+
+
 def _make_dot(color):
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -161,6 +168,7 @@ class App:
 
     def _build_ui(self):
         self.root.title(f"WhisperFlow Local v{VERSION}")
+        _set_window_icon(self.root)
         self.root.resizable(False, False)
         self.root.attributes("-topmost", False)
         pad = {"padx": 10, "pady": 4}
@@ -662,6 +670,7 @@ def main():
     if lock is None:
         root = tk.Tk()
         root.withdraw()
+        _set_window_icon(root)
         messagebox.showinfo(
             "WhisperFlow Local",
             "WhisperFlow Local is already running.\n"

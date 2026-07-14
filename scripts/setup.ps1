@@ -42,7 +42,7 @@ try {
         $sc.TargetPath = $pyw
         $sc.Arguments = "`"$app`""
         $sc.WorkingDirectory = $root
-        $sc.IconLocation = "%SystemRoot%\System32\SndVol.exe,0"
+        $sc.IconLocation = "$root\icon.ico"
         $sc.Description = "Local push-to-talk dictation"
         $sc.Save()
     }
