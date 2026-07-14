@@ -1,4 +1,4 @@
-# WhisperFlow Local — one-time setup.
+# WhisperFlow Local - one-time setup.
 # Installs Python 3.12 if missing, installs dependencies, creates
 # desktop + startup shortcuts, and launches the app.
 
@@ -45,6 +45,6 @@ foreach ($dir in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFo
 Write-Host "Shortcuts created (Desktop + Startup)." -ForegroundColor Green
 
 # --- Launch ------------------------------------------------------------------
-Write-Host "Launching WhisperFlow Local — first run downloads the speech model (~75 MB)." -ForegroundColor Green
+Write-Host "Launching WhisperFlow Local - first run downloads the speech model (~75 MB)." -ForegroundColor Green
 Start-Process $pyw -ArgumentList "`"$app`"" -WorkingDirectory $root
 Write-Host "Done! Hold F8 in any app to dictate. Settings live in the tray icon."
