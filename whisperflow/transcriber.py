@@ -5,6 +5,8 @@ This replaces Wispr Flow's cloud ASR with a fully local Whisper model
 cached in ~/.cache/huggingface.
 """
 
+import threading
+
 import numpy as np
 from faster_whisper import WhisperModel
 
@@ -18,18 +20,24 @@ class Transcriber:
     def __init__(self, model_size: str = "base.en", device: str = "cpu",
                  compute_type: str = "int8"):
         self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        # Live partial-transcript passes and the final post-release pass can
+        # both call transcribe() close together; a single WhisperModel isn't
+        # safe under concurrent calls, so serialize them.
+        self._lock = threading.Lock()
 
     def transcribe(self, audio: np.ndarray, language: str | None = None,
-                   initial_prompt: str | None = None) -> str:
+                   initial_prompt: str | None = None, beam_size: int = 5) -> str:
         """initial_prompt biases recognition toward the words it contains —
-        used for the custom vocabulary (product names, jargon)."""
+        used for the custom vocabulary (product names, jargon). Live partial
+        passes pass beam_size=1 for speed; the final pass uses the default 5."""
         if audio.size < int(MIN_AUDIO_SECONDS * 16000):
             return ""
-        segments, _info = self.model.transcribe(
-            audio,
-            language=language,
-            beam_size=5,
-            vad_filter=True,  # trims silence so hold-and-think doesn't hallucinate
-            initial_prompt=initial_prompt,
-        )
-        return " ".join(seg.text.strip() for seg in segments).strip()
+        with self._lock:
+            segments, _info = self.model.transcribe(
+                audio,
+                language=language,
+                beam_size=beam_size,
+                vad_filter=True,  # trims silence so hold-and-think doesn't hallucinate
+                initial_prompt=initial_prompt,
+            )
+            return " ".join(seg.text.strip() for seg in segments).strip()

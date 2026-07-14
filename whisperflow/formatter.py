@@ -14,6 +14,46 @@ _VOICE_COMMANDS = [
     (re.compile(r"[.,]?\s*\bnew line\b[.,]?\s*", re.IGNORECASE), "\n"),
 ]
 
+# Whole-utterance action commands — checked against the ENTIRE dictated
+# phrase, never mid-sentence, so ordinary dictation containing these words
+# ("select all the applicants") can't misfire as a command.
+VOICE_ACTIONS = {
+    "select all": "select_all",
+    "select everything": "select_all",
+    "scratch that": "discard",
+    "never mind": "discard",
+    "cancel that": "discard",
+    "delete last sentence": "delete_last_sentence",
+    "delete that sentence": "delete_last_sentence",
+    "undo that": "delete_last_sentence",
+}
+
+
+def detect_action(text: str) -> str | None:
+    """Return the action name if the whole utterance is a command phrase,
+    else None."""
+    normalized = text.strip().strip(".,!?").strip().lower()
+    return VOICE_ACTIONS.get(normalized)
+
+
+def suggest_new_vocab(raw: str, cleaned: str) -> list[str]:
+    """Words that appear capitalized in AI-cleaned text but nowhere in the
+    raw Whisper transcript — likely names/jargon Whisper misheard and
+    Claude corrected. Feeds the "learned vocabulary" feature."""
+    raw_words = {w.lower() for w in re.findall(r"[A-Za-z']+", raw)}
+    seen = set()
+    candidates = []
+    for word in re.findall(r"[A-Za-z']+", cleaned):
+        if len(word) < 3 or not word[0].isupper():
+            continue
+        low = word.lower()
+        if low in raw_words or low in seen:
+            continue
+        seen.add(low)
+        candidates.append(word)
+    return candidates
+
+
 CLEANUP_SYSTEM = (
     "You clean up dictated text. Fix grammar, punctuation, and casing. "
     "Remove filler words (um, uh, you know) and apply self-corrections the "

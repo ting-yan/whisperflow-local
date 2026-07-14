@@ -8,6 +8,7 @@ Run with:  pythonw app.py   (no console)  or  python app.py  (with console)
 """
 
 import json
+import re
 import socket
 import sys
 import threading
@@ -15,7 +16,7 @@ import time
 import webbrowser
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -35,7 +36,9 @@ from PIL import Image, ImageDraw
 
 from whisperflow.recorder import Recorder
 from whisperflow.transcriber import Transcriber
-from whisperflow.formatter import basic_format, AIFormatter
+from whisperflow.formatter import (
+    basic_format, AIFormatter, detect_action, suggest_new_vocab,
+)
 from whisperflow.injector import inject
 from whisperflow.updater import check_for_update
 
@@ -49,7 +52,34 @@ ASSET_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
 
 CONFIG_PATH = BASE_DIR / "config.json"
 LOG_PATH = BASE_DIR / "whisperflow.log"
-MODEL_CHOICES = ["tiny.en", "base.en", "small.en", "medium", "large-v3"]
+MODEL_CHOICES = [
+    "tiny.en", "tiny", "base.en", "base", "small.en", "small",
+    "medium", "large-v3",
+]
+
+# Display name -> Whisper language code (None = auto-detect). ".en"-suffixed
+# models are English-only and can't use any entry here except "English".
+LANGUAGE_CHOICES = [
+    ("Auto-detect", None),
+    ("English", "en"),
+    ("Spanish", "es"),
+    ("French", "fr"),
+    ("German", "de"),
+    ("Italian", "it"),
+    ("Portuguese", "pt"),
+    ("Dutch", "nl"),
+    ("Russian", "ru"),
+    ("Chinese", "zh"),
+    ("Japanese", "ja"),
+    ("Korean", "ko"),
+    ("Hindi", "hi"),
+    ("Arabic", "ar"),
+]
+_LANG_DISPLAY_TO_CODE = dict(LANGUAGE_CHOICES)
+_LANG_CODE_TO_DISPLAY = {code: name for name, code in LANGUAGE_CHOICES}
+
+PARTIAL_INTERVAL = 1.2  # seconds between live partial-transcript passes
+MIN_PARTIAL_AUDIO = 0.6  # seconds — skip partial passes on very short buffers
 
 
 def log_error(context: str):
@@ -118,6 +148,7 @@ class App:
         self._busy = False
         self._hooks = []
         self._loaded_model = None
+        self._last_injected_text = ""
 
         self._build_ui()
         self._start_tray()
@@ -193,18 +224,41 @@ class App:
         ttk.Label(frame, text="(bigger = slower, more accurate)",
                   foreground="#888").grid(row=6, column=2, sticky="w", **pad)
 
+        # Language picker — ".en" models only ever understand English, so
+        # picking anything else auto-switches to the multilingual model.
+        ttk.Label(frame, text="Language:").grid(row=7, column=0,
+                                                sticky="w", **pad)
+        lang_values = [name for name, _ in LANGUAGE_CHOICES]
+        current_code = self.config.get("language")
+        current_display = _LANG_CODE_TO_DISPLAY.get(current_code)
+        if current_display is None:
+            current_display = current_code or "Auto-detect"
+            if current_display not in lang_values:
+                lang_values = lang_values + [current_display]
+        self.lang_var = tk.StringVar(value=current_display)
+        lang_box = ttk.Combobox(frame, textvariable=self.lang_var,
+                                values=lang_values, state="readonly",
+                                width=14)
+        lang_box.grid(row=7, column=1, sticky="w", **pad)
+        lang_box.bind("<<ComboboxSelected>>", self._on_language_change)
+        self.lang_note_var = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=self.lang_note_var,
+                  foreground="#a05a2c").grid(row=7, column=2,
+                                             sticky="w", **pad)
+
         # Custom vocabulary
-        ttk.Label(frame, text="Vocabulary:").grid(row=7, column=0,
+        ttk.Label(frame, text="Vocabulary:").grid(row=8, column=0,
                                                   sticky="w", **pad)
         self.vocab_var = tk.StringVar(
             value=", ".join(self.config.get("vocabulary") or []))
         ttk.Entry(frame, textvariable=self.vocab_var,
-                  width=37).grid(row=7, column=1, columnspan=2,
+                  width=37).grid(row=8, column=1, columnspan=2,
                                  sticky="w", **pad)
         ttk.Label(frame, text="Comma-separated words Whisper should favor "
-                              "(names, jargon)",
-                  foreground="#888").grid(row=8, column=1, columnspan=2,
-                                          sticky="w", padx=10)
+                              "(names, jargon) — grows automatically when "
+                              "AI cleanup corrects a name",
+                  foreground="#888", wraplength=320).grid(
+            row=9, column=1, columnspan=2, sticky="w", padx=10)
 
         # AI cleanup toggle
         self.ai_var = tk.BooleanVar(
@@ -214,11 +268,11 @@ class App:
             text="AI cleanup via Claude (fixes grammar/filler; needs "
                  "ANTHROPIC_API_KEY)",
             variable=self.ai_var,
-        ).grid(row=9, column=0, columnspan=3, sticky="w", **pad)
+        ).grid(row=10, column=0, columnspan=3, sticky="w", **pad)
 
         self.save_btn = ttk.Button(frame, text="Save & Apply",
                                    command=self._save)
-        self.save_btn.grid(row=10, column=0, columnspan=3, pady=(10, 2))
+        self.save_btn.grid(row=11, column=0, columnspan=3, pady=(10, 2))
 
         # Update notice — populated by the background check when a newer
         # GitHub release exists; clicking opens the release page.
@@ -226,8 +280,16 @@ class App:
         self.update_var = tk.StringVar(value="")
         update_lbl = ttk.Label(frame, textvariable=self.update_var,
                                foreground="#0a58ca", cursor="hand2")
-        update_lbl.grid(row=11, column=0, columnspan=3, pady=(0, 2))
+        update_lbl.grid(row=12, column=0, columnspan=3, pady=(0, 2))
         update_lbl.bind("<Button-1>", self._open_update)
+
+        ttk.Label(frame, text='Commands: "new line", "new paragraph", '
+                              '"select all", "scratch that", '
+                              '"delete last sentence" — say one alone, '
+                              'not mid-sentence',
+                  foreground="#888", font=("Segoe UI", 8),
+                  wraplength=360).grid(row=13, column=0, columnspan=3,
+                                       sticky="w", padx=10, pady=(4, 0))
 
         # Closing the window hides to the tray; quit from the tray menu.
         self.root.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
@@ -376,6 +438,28 @@ class App:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _lang_code_for_display(self, display: str):
+        if display in _LANG_DISPLAY_TO_CODE:
+            return _LANG_DISPLAY_TO_CODE[display]
+        return None if display == "Auto-detect" else display
+
+    def _on_language_change(self, _event=None):
+        lang_code = self._lang_code_for_display(self.lang_var.get())
+        model = self.model_var.get()
+        if model.endswith(".en") and lang_code != "en":
+            multilingual = model[:-3]
+            if multilingual in MODEL_CHOICES:
+                self.model_var.set(multilingual)
+                self.lang_note_var.set(f"switched model to '{multilingual}'")
+            else:
+                self.lang_note_var.set(".en models are English-only")
+        else:
+            self.lang_note_var.set("")
+
+    def _transcribe_args(self):
+        vocab = self.config.get("vocabulary") or []
+        return self.config.get("language"), (", ".join(vocab) if vocab else None)
+
     # ------------------------------------------------------- push-to-talk
     # The keyboard hooks fire on the hook thread, but WASAPI streams can
     # only be opened from a COM-initialized thread (opening a specific mic
@@ -409,6 +493,30 @@ class App:
         _beep(880)
         self._set_tray("rec", "WhisperFlow Local — RECORDING")
         self._set_status("Recording... (release to transcribe)")
+        threading.Thread(target=self._partial_loop, daemon=True).start()
+
+    def _partial_loop(self):
+        """While the hotkey is held, periodically re-transcribe the audio
+        captured so far and show it as a live preview (beam_size=1 for
+        speed). The final pass after release re-transcribes at full
+        quality, so this only needs to be fast, not perfect."""
+        while self.recorder.is_recording:
+            time.sleep(PARTIAL_INTERVAL)
+            if not self.recorder.is_recording or self.transcriber is None:
+                break
+            audio = self.recorder.peek()
+            if audio.size < int(MIN_PARTIAL_AUDIO * 16000):
+                continue
+            language, prompt = self._transcribe_args()
+            try:
+                text = self.transcriber.transcribe(
+                    audio, language=language, initial_prompt=prompt,
+                    beam_size=1)
+            except Exception:
+                continue
+            if text and self.recorder.is_recording:
+                self.root.after(
+                    0, lambda t=text: self.transcript_var.set(f"… {t}"))
 
     def _stop_recording(self):
         if not self.recorder.is_recording:
@@ -423,23 +531,75 @@ class App:
     def _process(self, audio):
         try:
             self._set_status("Transcribing...")
-            vocab = self.config.get("vocabulary") or []
-            text = self.transcriber.transcribe(
-                audio,
-                language=self.config.get("language"),
-                initial_prompt=", ".join(vocab) if vocab else None)
-            if not text:
+            language, prompt = self._transcribe_args()
+            raw_text = self.transcriber.transcribe(
+                audio, language=language, initial_prompt=prompt)
+            if not raw_text:
                 self._ready_status(transcript="(no speech detected)")
                 return
-            text = basic_format(text)
+
+            action = detect_action(raw_text)
+            if action == "discard":
+                self._ready_status(transcript="(discarded)")
+                return
+            if action == "select_all":
+                keyboard.send("ctrl+a")
+                self._ready_status(transcript="(select all)")
+                return
+            if action == "delete_last_sentence":
+                self._delete_last_sentence()
+                self._ready_status(transcript="(deleted last sentence)")
+                return
+
+            text = basic_format(raw_text)
+            learned_note = ""
             if self.ai_formatter is not None:
-                text = self.ai_formatter.cleanup(text)
+                cleaned = self.ai_formatter.cleanup(text)
+                candidates = suggest_new_vocab(text, cleaned)
+                added = self._learn_vocabulary(candidates) if candidates else []
+                if added:
+                    learned_note = f"  [learned: {', '.join(added)}]"
+                text = cleaned
             inject(text, mode=self.config.get("paste_mode", "paste"))
-            self._ready_status(transcript=text)
+            self._last_injected_text = text
+            self._ready_status(transcript=text + learned_note)
         except Exception as exc:
+            log_error("processing failed")
             self._set_status(f"Error: {exc}")
         finally:
             self._busy = False
+
+    def _delete_last_sentence(self):
+        """Backspace out the last sentence of the most recent dictation.
+        Only reliable if the cursor hasn't moved since that paste."""
+        prev = self._last_injected_text
+        if not prev:
+            return
+        sentences = [s for s in re.split(r"(?<=[.!?])\s+", prev.strip()) if s]
+        if not sentences:
+            return
+        sentences.pop()
+        remaining = " ".join(sentences)
+        delete_count = len(prev) - len(remaining)
+        for _ in range(delete_count):
+            keyboard.send("backspace")
+            time.sleep(0.004)
+        self._last_injected_text = remaining
+
+    def _learn_vocabulary(self, new_words: list) -> list:
+        """Persist newly-suggested vocabulary words and reflect them in
+        the UI. Returns only the words that were actually new."""
+        vocab = self.config.get("vocabulary") or []
+        existing_lower = {w.lower() for w in vocab}
+        added = [w for w in new_words if w.lower() not in existing_lower]
+        if not added:
+            return []
+        vocab = (vocab + added)[-200:]  # cap growth
+        self.config["vocabulary"] = vocab
+        CONFIG_PATH.write_text(
+            json.dumps(self.config, indent=2), encoding="utf-8")
+        self.root.after(0, lambda: self.vocab_var.set(", ".join(vocab)))
+        return added
 
     def _ready_status(self, transcript=None):
         key = self.config.get("hotkey", "f8").upper()
@@ -450,11 +610,13 @@ class App:
     # ---------------------------------------------------------------- save
 
     def _save(self):
+        self._on_language_change()  # enforce the .en/language pairing once more
         mic = self.mic_var.get()
         self.config["input_device"] = None if mic == DEFAULT_MIC_LABEL else mic
         self.config["hotkey"] = self.hotkey_var.get() or "f8"
         self.config["hold_to_talk"] = self.hold_var.get()
         self.config["model_size"] = self.model_var.get()
+        self.config["language"] = self._lang_code_for_display(self.lang_var.get())
         self.config["vocabulary"] = [
             w.strip() for w in self.vocab_var.get().split(",") if w.strip()]
         self.config.setdefault("ai_cleanup", {})
