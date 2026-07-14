@@ -29,20 +29,29 @@ Write-Host "Installing dependencies (this can take a minute)..." -ForegroundColo
 & $py -m pip install -r requirements.txt --quiet --disable-pip-version-check
 if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
-# --- Shortcuts ---------------------------------------------------------------
+# --- Shortcuts -----------------------------------------------------------
+# Best-effort: some machines block .lnk writes to Desktop (Controlled Folder
+# Access, antivirus). That should not stop setup - deps are already
+# installed at this point, so fall through to launching the app either way.
 $pyw = Join-Path (Split-Path $py) "pythonw.exe"
 $app = Join-Path $root "app.py"
-$ws = New-Object -ComObject WScript.Shell
-foreach ($dir in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Startup'))) {
-    $sc = $ws.CreateShortcut("$dir\WhisperFlow Local.lnk")
-    $sc.TargetPath = $pyw
-    $sc.Arguments = "`"$app`""
-    $sc.WorkingDirectory = $root
-    $sc.IconLocation = "%SystemRoot%\System32\SndVol.exe,0"
-    $sc.Description = "Local push-to-talk dictation"
-    $sc.Save()
+try {
+    $ws = New-Object -ComObject WScript.Shell
+    foreach ($dir in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Startup'))) {
+        $sc = $ws.CreateShortcut("$dir\WhisperFlow Local.lnk")
+        $sc.TargetPath = $pyw
+        $sc.Arguments = "`"$app`""
+        $sc.WorkingDirectory = $root
+        $sc.IconLocation = "%SystemRoot%\System32\SndVol.exe,0"
+        $sc.Description = "Local push-to-talk dictation"
+        $sc.Save()
+    }
+    Write-Host "Shortcuts created (Desktop + Startup)." -ForegroundColor Green
+} catch {
+    Write-Host "Could not create shortcuts (often Controlled Folder Access or antivirus blocking Desktop writes)." -ForegroundColor Yellow
+    Write-Host "The app still works - launch it with run.bat. For auto-start, manually copy a shortcut into:" -ForegroundColor Yellow
+    Write-Host "  $([Environment]::GetFolderPath('Startup'))" -ForegroundColor Yellow
 }
-Write-Host "Shortcuts created (Desktop + Startup)." -ForegroundColor Green
 
 # --- Launch ------------------------------------------------------------------
 Write-Host "Launching WhisperFlow Local - first run downloads the speech model (~75 MB)." -ForegroundColor Green
