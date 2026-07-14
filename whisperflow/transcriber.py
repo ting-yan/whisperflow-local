@@ -5,7 +5,14 @@ This replaces Wispr Flow's cloud ASR with a fully local Whisper model
 cached in ~/.cache/huggingface.
 """
 
+import os
 import threading
+
+# Hugging Face's "Xet" fast-download backend (hf_xet) intermittently 401s on
+# its CAS storage service even for public models (huggingface/xet-core#404).
+# Must be set before faster_whisper pulls in huggingface_hub, since the flag
+# is read once at import time. Falls back to the plain HTTPS downloader.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 import numpy as np
 from faster_whisper import WhisperModel
