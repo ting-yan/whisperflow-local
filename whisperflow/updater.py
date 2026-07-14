@@ -1,8 +1,9 @@
 """Update check: compare the running version against the latest GitHub release.
 
-Uses only the standard library so the frozen exe stays lean. On a private
-repo the unauthenticated API returns 404 — callers treat any failure as
-"no update information", never as an error the user sees.
+Uses only the standard library so the frozen exe stays lean. The repo is
+public, so this works unauthenticated; callers still treat any failure
+(offline, rate-limited, etc.) as "no update information", never as an
+error the user sees.
 """
 
 import json
@@ -21,8 +22,8 @@ def check_for_update(current_version: str):
     """Return (latest_version, download_url) if newer than current, else None.
 
     Raises on network/API failure — callers should swallow exceptions.
-    A GITHUB_TOKEN env var is used if present (needed while the repo is
-    private; public repos work unauthenticated).
+    A GITHUB_TOKEN env var is used if present (not required for this repo
+    since it's public, but lets a private fork reuse this unchanged).
     """
     request = urllib.request.Request(
         API_URL,

@@ -308,7 +308,7 @@ class App:
             try:
                 result = check_for_update(VERSION)
             except Exception:
-                return  # offline, private repo without token, etc. — stay quiet
+                return  # offline, GitHub unreachable, etc. — stay quiet
             if not result:
                 return
             latest, url = result
