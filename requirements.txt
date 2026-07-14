@@ -5,4 +5,5 @@ pyperclip>=1.8.2
 numpy
 pystray>=0.19
 pillow>=10.0
+opencc-python-reimplemented>=0.1.7  # normalizes Chinese output to Simplified
 anthropic>=0.40  # optional — only needed if ai_cleanup.enabled is true

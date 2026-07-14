@@ -9,6 +9,25 @@ Two tiers, mirroring Wispr Flow's AI-formatting stage:
 
 import re
 
+_CJK_RE = re.compile(r"[一-鿿]")  # CJK Unified Ideographs
+_opencc_converter = None
+
+
+def to_simplified(text: str) -> str:
+    """Normalize any Chinese in text to Simplified script. Whisper's "zh"
+    language tag doesn't distinguish Simplified/Traditional, so its output
+    isn't consistently one or the other — this fixes it up afterward.
+    No-op (and no OpenCC import cost) when the text has no CJK characters,
+    so non-Chinese dictation never pays for it."""
+    global _opencc_converter
+    if not _CJK_RE.search(text):
+        return text
+    if _opencc_converter is None:
+        from opencc import OpenCC
+        _opencc_converter = OpenCC("t2s")
+    return _opencc_converter.convert(text)
+
+
 _VOICE_COMMANDS = [
     (re.compile(r"[.,]?\s*\bnew paragraph\b[.,]?\s*", re.IGNORECASE), "\n\n"),
     (re.compile(r"[.,]?\s*\bnew line\b[.,]?\s*", re.IGNORECASE), "\n"),
@@ -71,6 +90,7 @@ def basic_format(text: str) -> str:
     text = "\n".join(line.strip() for line in text.split("\n")).strip()
     if text and text[0].islower():
         text = text[0].upper() + text[1:]
+    text = to_simplified(text)
     return text
 
 

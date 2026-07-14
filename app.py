@@ -37,7 +37,7 @@ from PIL import Image, ImageDraw
 from whisperflow.recorder import Recorder
 from whisperflow.transcriber import Transcriber
 from whisperflow.formatter import (
-    basic_format, AIFormatter, detect_action, suggest_new_vocab,
+    basic_format, AIFormatter, detect_action, suggest_new_vocab, to_simplified,
 )
 from whisperflow.injector import inject
 from whisperflow.updater import check_for_update
@@ -515,6 +515,7 @@ class App:
             except Exception:
                 continue
             if text and self.recorder.is_recording:
+                text = to_simplified(text)
                 self.root.after(
                     0, lambda t=text: self.transcript_var.set(f"… {t}"))
 
