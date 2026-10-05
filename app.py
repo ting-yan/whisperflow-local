@@ -9,14 +9,16 @@ Run with:  pythonw app.py   (no console)  or  python app.py  (with console)
 
 import json
 import re
+import os
 import socket
+import subprocess
 import sys
 import threading
 import time
 import webbrowser
 from pathlib import Path
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -323,8 +325,10 @@ class App:
                 return
             latest, url = result
             self._update_url = url
+            self._update_version = latest
+            action = "download" if getattr(sys, "frozen", False) else "install"
             self.root.after(0, lambda: self.update_var.set(
-                f"Update v{latest} available — click to download"))
+                f"Update v{latest} available — click to {action}"))
             try:
                 self.tray.notify(f"Version {latest} is available.",
                                  "WhisperFlow Local update")
@@ -334,8 +338,26 @@ class App:
         threading.Thread(target=worker, daemon=True).start()
 
     def _open_update(self, _event=None):
-        if self._update_url:
+        """Exe installs: open the release page (a running exe can't replace
+        itself). Source installs: hand off to scripts/update.ps1, which waits
+        for this process to exit, updates the folder in place, and restarts."""
+        if not self._update_url:
+            return
+        updater = BASE_DIR / "scripts" / "update.ps1"
+        if getattr(sys, "frozen", False) or not updater.exists():
             webbrowser.open(self._update_url)
+            return
+        if not messagebox.askyesno(
+                "WhisperFlow Local",
+                f"Update to v{self._update_version} now?\n\nWhisperFlow will "
+                "close, update itself (your settings are kept), and restart "
+                "in about a minute.", parent=self.root):
+            return
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-File", str(updater), "-WaitPid", str(os.getpid())],
+            cwd=str(BASE_DIR), creationflags=subprocess.CREATE_NEW_CONSOLE)
+        self._quit()
 
     # ---------------------------------------------------------------- tray
 

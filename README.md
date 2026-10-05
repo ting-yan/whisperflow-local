@@ -58,6 +58,23 @@ sizes to use on CPU.
 **Standalone exe** (from [Releases](../../releases)): no setup, CPU only,
 English + Chinese by default — change them with **Languages...** in the app.
 
+## Updating
+
+The app checks GitHub for a new release each time it starts. When there is
+one, a blue **"Update vX available"** link appears in the settings window
+(plus a tray notification).
+
+- **Installed with `setup.bat`:** click the link and confirm. The app closes,
+  downloads the new version over its folder, updates dependencies, and
+  restarts — about a minute. Or quit the app and run **`update.bat`**. Your
+  settings (`config.json`) are kept. A `git clone` is updated with
+  `git pull` instead.
+- **Standalone exe:** the link opens the release page. Quit the app,
+  download the new zip, and extract it over the old folder — `config.json`
+  isn't in the zip, so your settings are kept.
+
+Only releases trigger the notice; commits to `main` alone don't.
+
 ## Usage
 
 - **Hold F8**, speak, release. High beep = recording, low beep = processing.
