@@ -228,27 +228,24 @@ class App:
 
         # Language picker — ".en" models only ever understand English, so
         # picking anything else auto-switches to the multilingual model.
+        # "Languages..." edits the enabled set the dropdown is built from.
         ttk.Label(frame, text="Language:").grid(row=7, column=0,
                                                 sticky="w", **pad)
-        choices = language_choices(configured_languages(self.config))
-        self._lang_display_to_code = dict(choices)
-        lang_values = [name for name, _ in choices]
-        current_code = self.config.get("language")
-        current_display = {c: n for n, c in choices}.get(current_code)
-        if current_display is None:
-            current_display = current_code or "Auto-detect"
-            if current_display not in lang_values:
-                lang_values = lang_values + [current_display]
-        self.lang_var = tk.StringVar(value=current_display)
-        lang_box = ttk.Combobox(frame, textvariable=self.lang_var,
-                                values=lang_values, state="readonly",
-                                width=24)
-        lang_box.grid(row=7, column=1, sticky="w", **pad)
-        lang_box.bind("<<ComboboxSelected>>", self._on_language_change)
+        self._languages = configured_languages(self.config)
+        self._lang_display_to_code = {}
+        self.lang_var = tk.StringVar(value="")
+        self.lang_box = ttk.Combobox(frame, textvariable=self.lang_var,
+                                     state="readonly", width=24)
+        self.lang_box.grid(row=7, column=1, sticky="w", **pad)
+        self.lang_box.bind("<<ComboboxSelected>>", self._on_language_change)
+        self._refresh_language_box(self.config.get("language"))
+        lang_side = ttk.Frame(frame)
+        lang_side.grid(row=7, column=2, sticky="w", **pad)
+        ttk.Button(lang_side, text="Languages...",
+                   command=self._choose_languages).pack(side="left")
         self.lang_note_var = tk.StringVar(value="")
-        ttk.Label(frame, textvariable=self.lang_note_var,
-                  foreground="#a05a2c").grid(row=7, column=2,
-                                             sticky="w", **pad)
+        ttk.Label(lang_side, textvariable=self.lang_note_var,
+                  foreground="#a05a2c").pack(side="left", padx=(6, 0))
 
         # Custom vocabulary
         ttk.Label(frame, text="Vocabulary:").grid(row=8, column=0,
@@ -450,6 +447,62 @@ class App:
             self.root.after(0, apply)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _refresh_language_box(self, wanted_code):
+        """Rebuild the dropdown from self._languages and select wanted_code,
+        or the nearest valid choice if it's no longer enabled: auto-detect
+        when several languages are on, the only one when just one is."""
+        choices = language_choices(self._languages)
+        self._lang_display_to_code = dict(choices)
+        self.lang_box.config(values=[name for name, _ in choices])
+        if wanted_code not in self._languages:
+            wanted_code = None if len(self._languages) > 1 else self._languages[0]
+        self.lang_var.set({c: n for n, c in choices}[wanted_code])
+
+    def _choose_languages(self):
+        """Checklist of every offered language; OK updates the dropdown,
+        Save & Apply persists it to config["languages"]."""
+        top = tk.Toplevel(self.root)
+        top.title("Languages")
+        _set_window_icon(top)
+        top.transient(self.root)
+        top.resizable(False, False)
+        body = ttk.Frame(top, padding=12)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Languages you dictate in. Auto-detect only "
+                             "chooses between these — fewer means fewer "
+                             "wrong guesses.",
+                  wraplength=300).grid(row=0, column=0, columnspan=2,
+                                       sticky="w", pady=(0, 8))
+        checks = {}
+        codes = list(LANGUAGE_NAMES)
+        half = (len(codes) + 1) // 2
+        for i, code in enumerate(codes):
+            checks[code] = tk.BooleanVar(value=code in self._languages)
+            ttk.Checkbutton(body, text=LANGUAGE_NAMES[code],
+                            variable=checks[code]).grid(
+                row=1 + i % half, column=i // half, sticky="w", padx=(0, 16))
+
+        def ok():
+            picked = [c for c in codes if checks[c].get()]
+            if not picked:
+                messagebox.showwarning("Languages", "Pick at least one.",
+                                       parent=top)
+                return
+            current = self._lang_code_for_display(self.lang_var.get())
+            self._languages = picked
+            self._refresh_language_box(current)
+            self._on_language_change()
+            if not self.lang_note_var.get():
+                self.lang_note_var.set("Save & Apply to keep")
+            top.destroy()
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=1 + half, column=0, columnspan=2, pady=(10, 0))
+        ttk.Button(buttons, text="OK", command=ok).pack(side="left", padx=4)
+        ttk.Button(buttons, text="Cancel",
+                   command=top.destroy).pack(side="left", padx=4)
+        top.grab_set()
 
     def _lang_code_for_display(self, display: str):
         if display in self._lang_display_to_code:
@@ -657,6 +710,7 @@ class App:
         self.config["hotkey"] = self.hotkey_var.get() or "f8"
         self.config["hold_to_talk"] = self.hold_var.get()
         self.config["model_size"] = self.model_var.get()
+        self.config["languages"] = list(self._languages)
         self.config["language"] = self._lang_code_for_display(self.lang_var.get())
         self.config["singlish"] = self.singlish_var.get()
         self.config["vocabulary"] = [

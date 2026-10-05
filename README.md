@@ -56,8 +56,7 @@ instead of Intel MKL on non-Intel CPUs automatically. `base`/`small` are the
 sizes to use on CPU.
 
 **Standalone exe** (from [Releases](../../releases)): no setup, CPU only,
-English + Chinese by default. To change languages, edit `"languages"` in the
-`config.json` next to the exe (e.g. `["en", "ms"]`) and restart it.
+English + Chinese by default — change them with **Languages...** in the app.
 
 ## Usage
 
@@ -107,7 +106,7 @@ Everything is in the app window (saved to `config.json`, created from
 | Hotkey | Click Set..., press a key |
 | Hold to talk | Unchecked = press once to start, again to stop |
 | Model | `tiny.en`/`tiny` (fastest) → `large-v3` (best). `base.en`/`small.en` are the sweet spots on CPU. `.en` = English-only, bare name = multilingual |
-| Language | Auto-detect between the languages chosen at install, or pin one of them (see below). Picking anything but English auto-switches you off a `.en` model, since those can't recognize other languages at all |
+| Language | Auto-detect between your enabled languages, or pin one of them (see below). **Languages...** changes which are enabled (also asked at install). Picking anything but English auto-switches you off a `.en` model, since those can't recognize other languages at all |
 | Vocabulary | Comma-separated words Whisper should favor (names, jargon). Auto-grows: when AI cleanup fixes a name Whisper misheard, it's added here automatically (capped at 200 entries) |
 | Singlish mode | Adds Singlish particles and loanwords to the prompt when the utterance is English. See below |
 | AI cleanup | Sends transcripts to Claude (`claude-haiku-4-5`) for grammar/filler fixes. Needs `ANTHROPIC_API_KEY`; no longer fully local when enabled. Also powers the vocabulary auto-learning above |
