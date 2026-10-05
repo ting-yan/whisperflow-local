@@ -1,6 +1,8 @@
 # WhisperFlow Local - one-time setup.
-# Installs Python 3.12 if missing, installs dependencies, creates
-# desktop + startup shortcuts, and launches the app.
+# Installs Python 3.12 if missing, asks which languages you speak and
+# whether to use an NVIDIA GPU, installs dependencies, creates desktop +
+# startup shortcuts, and launches the app. Re-run it any time to change
+# those two answers; other settings in config.json are kept.
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
@@ -23,21 +25,61 @@ if (-not $py) {
     if (-not $py) { throw "Python install failed - install Python 3.12 manually from python.org, then re-run setup.bat" }
 }
 Write-Host "Using Python: $py"
+$configure = Join-Path $root "scripts\configure.py"
+
+# --- Languages ---------------------------------------------------------------
+# Auto-detect only chooses between the languages picked here, so pick only
+# the ones you actually speak - each extra one is another way to guess wrong.
+# configure.py is stdlib-only, so this works before dependencies install.
+Write-Host ""
+Write-Host "Which languages will you dictate in?" -ForegroundColor Cyan
+& $py $configure --list
+$current = (& $py $configure --current).Trim()
+while ($true) {
+    $answer = Read-Host "Numbers or codes, comma-separated (Enter = $current)"
+    if (-not $answer.Trim()) { $answer = $current }
+    & $py $configure --languages $answer
+    if ($LASTEXITCODE -eq 0) { break }
+}
+
+# --- GPU or CPU --------------------------------------------------------------
+# The speech engine (CTranslate2) can only use NVIDIA GPUs. AMD Radeon and
+# Intel graphics aren't supported, so those machines always run on the CPU,
+# which works fine on Intel and AMD Ryzen processors alike.
+$useGpu = $false
+if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
+    $gpuName = (& nvidia-smi --query-gpu=name --format=csv,noheader | Select-Object -First 1)
+    Write-Host ""
+    Write-Host "NVIDIA GPU found: $gpuName" -ForegroundColor Cyan
+    Write-Host "  GPU: ~5x faster dictation; downloads NVIDIA's CUDA runtime (~700 MB, one-time)."
+    Write-Host "  CPU: no extra download; slower, especially with the bigger models."
+    $answer = Read-Host "Use the GPU? [Y/n]"
+    $useGpu = $answer.Trim() -notmatch '^(n|no)$'
+} else {
+    Write-Host ""
+    Write-Host "No NVIDIA GPU found - WhisperFlow will run on the CPU." -ForegroundColor Cyan
+}
 
 # --- Dependencies ------------------------------------------------------------
+Write-Host ""
 Write-Host "Installing dependencies (this can take a minute)..." -ForegroundColor Cyan
 & $py -m pip install -r requirements.txt --quiet --disable-pip-version-check
 if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
-# CUDA 12 runtime, only where there is a card to use it. faster-whisper runs
-# ~5x faster on the GPU; without these wheels it silently stays on the CPU.
-if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
-    Write-Host "NVIDIA GPU detected - installing CUDA runtime (~700 MB, one-time)..." -ForegroundColor Cyan
+$device = "cpu"
+if ($useGpu) {
+    Write-Host "Installing NVIDIA CUDA runtime (~700 MB, one-time)..." -ForegroundColor Cyan
     & $py -m pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12>=9" --quiet --disable-pip-version-check
-    if ($LASTEXITCODE -ne 0) {
+    if ($LASTEXITCODE -eq 0) {
+        # "auto" rather than "cuda": GPU when it works, and if a driver update
+        # ever breaks it the app falls back to the CPU instead of not starting.
+        $device = "auto"
+    } else {
         Write-Host "CUDA runtime install failed - the app will run on the CPU." -ForegroundColor Yellow
     }
 }
+& $py $configure --device $device
+if ($LASTEXITCODE -ne 0) { throw "could not write config.json" }
 
 # --- Shortcuts -----------------------------------------------------------
 # Best-effort: some machines block .lnk writes to Desktop (Controlled Folder

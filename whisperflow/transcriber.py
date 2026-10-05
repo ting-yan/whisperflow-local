@@ -58,21 +58,21 @@ from faster_whisper import WhisperModel
 # Discard clips shorter than this — accidental key taps produce no speech.
 MIN_AUDIO_SECONDS = 0.3
 
-# Auto-detect only ever chooses between these. Whisper's detector ranks all
-# 99 languages, and on short or noisy speech the runners-up are junk like
-# "cy"/"nn" rather than a plausible second guess — letting one of those win
-# swaps the decoder into a language that isn't being spoken and loses the
-# whole utterance. Scoring only these two makes a misdetection a coin-flip
-# between English and Chinese instead of a total loss.
-DETECT_LANGUAGES = ("en", "zh")
+# Auto-detect only ever chooses between the user's configured languages
+# (whisperflow/languages.py). Whisper's detector ranks all 99, and on short or
+# noisy speech the runners-up are junk like "cy"/"nn" rather than a plausible
+# second guess — letting one of those win swaps the decoder into a language
+# that isn't being spoken and loses the whole utterance.
+from whisperflow.languages import DEFAULT_LANGUAGES
 
-# Chinese has to *clearly* beat English before auto-detect switches, because
-# Singlish is English that borrows Mandarin/Hokkien/Malay words: a sentence
-# with a few Chinese words in it scored en=0.47 / zh=0.52 here, and decoding
-# that as Chinese loses the English around it. Requiring a 1.5x lead keeps
-# code-switched speech in English while genuine Chinese (zh=0.998 vs
-# en=0.001 in the same test) still switches.
-DETECT_ZH_MARGIN = 1.5
+# When English is enabled, another language has to *clearly* beat it before
+# auto-detect switches, because code-switched speech (Singlish especially) is
+# English borrowing a few foreign words: a sentence with some Mandarin in it
+# scored en=0.47 / zh=0.52 here, and decoding that as Chinese loses the
+# English around it. Requiring a 1.5x lead keeps it in English while genuine
+# Chinese (zh=0.998 vs en=0.001 in the same test) still switches. Only tuned
+# on EN/ZH; applied to every non-English language on the same reasoning.
+DETECT_NON_EN_MARGIN = 1.5
 
 # Singlish isn't a language Whisper knows — there's no token for it, and it's
 # recognized as English. All we can do is bias the decoder toward spelling its
@@ -182,21 +182,28 @@ class Transcriber:
         when nothing has been detected yet (or the language was pinned)."""
         return getattr(self, "_detected", None)
 
-    def detect_language(self, audio: np.ndarray) -> str:
-        """Best of DETECT_LANGUAGES for this audio, cached until
-        reset_detection(). Costs one encoder pass (~80ms on GPU)."""
+    def detect_language(self, audio: np.ndarray, languages=None) -> str:
+        """Best of `languages` for this audio, cached until
+        reset_detection(). Costs one encoder pass (~80ms on GPU), or none
+        when there's only one language to choose."""
+        languages = list(languages or DEFAULT_LANGUAGES)
         if getattr(self, "_detected", None):
             return self._detected
         if not self.model.model.is_multilingual:
             return "en"  # ".en" models have no other option
+        if len(languages) == 1:
+            self._detected = languages[0]
+            return self._detected
         try:
             with self._lock:  # shares the model with in-flight partial passes
                 _lang, _prob, all_probs = self.model.detect_language(audio)
             probs = dict(all_probs)
-            en, zh = probs.get("en", 0.0), probs.get("zh", 0.0)
-            best = "zh" if zh > en * DETECT_ZH_MARGIN else "en"
+            best = max(languages, key=lambda c: probs.get(c, 0.0))
+            if ("en" in languages and best != "en"
+                    and probs.get(best, 0.0) <= probs.get("en", 0.0) * DETECT_NON_EN_MARGIN):
+                best = "en"
         except Exception:  # noqa: BLE001 — detection is best-effort
-            best = DETECT_LANGUAGES[0]
+            best = languages[0]
         self._detected = best
         return best
 
@@ -210,7 +217,9 @@ class Transcriber:
         with self._lock:
             if language is None:
                 # Never hand language=None to Whisper: its own auto-detect is
-                # unrestricted. Pick from DETECT_LANGUAGES ourselves instead.
+                # unrestricted. Pick from the default set ourselves instead
+                # (the app resolves the language before calling, so this
+                # fallback only matters to scripts like smoke_test.py).
                 language = self.detect_language(audio)
             segments, _info = self.model.transcribe(
                 audio,

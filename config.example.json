@@ -2,6 +2,7 @@
   "model_size": "base.en",
   "input_device": null,
   "language": "en",
+  "languages": ["en", "zh"],
   "singlish": false,
   "hotkey": "f8",
   "hold_to_talk": true,

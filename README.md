@@ -13,9 +13,10 @@ machine.
 - **Live partial transcript** while you're still talking, refined into the
   final result the moment you release the key
 - Settings window: pick your microphone, hotkey, model size, and language
-- **English + Chinese, with auto-detect** — pick one, or let it decide per
-  utterance between exactly those two (multilingual models only — `.en`
-  models are English-only and the app switches you off them automatically)
+- **Pick your languages at install, with auto-detect** — choose the ones you
+  speak (English, Chinese, Malay, Tamil, and 15 more); the app auto-detects
+  between exactly those, or you pin one (multilingual models only — `.en`
+  models are English-only and setup/the app switch you off them automatically)
 - **Singlish mode** — biases the decoder toward Singlish spelling (`lah`,
   `leh`, `shiok`, `makan`, `paiseh`, `jialat`) instead of the English words
   that sound like them
@@ -32,10 +33,31 @@ machine.
 1. [Download the ZIP](../../archive/refs/heads/main.zip) (or `git clone` this repo) and extract it somewhere permanent
 2. Double-click **`setup.bat`**
 
-That's it — setup installs Python 3.12 if you don't have it, installs
-dependencies, creates Desktop + Startup shortcuts, and launches the app.
-First launch downloads the speech model (~75 MB); after that it's fully
-offline.
+Setup asks two questions:
+
+- **Which languages you'll dictate in** — type menu numbers or codes, e.g.
+  `1,2` or `en,zh,ms`. Press Enter to keep the current set (English +
+  Chinese on a fresh install).
+- **GPU or CPU** — only asked if it finds an NVIDIA card. GPU is ~5x faster
+  but downloads NVIDIA's CUDA runtime (~700 MB, one-time); CPU needs nothing
+  extra.
+
+Then it installs Python 3.12 if you don't have it, installs dependencies,
+creates Desktop + Startup shortcuts, and launches the app. First launch
+downloads the speech model (~75 MB); after that it's fully offline.
+
+Re-run `setup.bat` any time to change either answer — your other settings
+(vocabulary, hotkey, model) are kept.
+
+**AMD and Intel machines:** the speech engine (CTranslate2) only supports
+NVIDIA GPUs, so AMD Radeon and Intel graphics run on the CPU. That works on
+any modern x86 processor, AMD Ryzen included — CTranslate2 picks oneDNN
+instead of Intel MKL on non-Intel CPUs automatically. `base`/`small` are the
+sizes to use on CPU.
+
+**Standalone exe** (from [Releases](../../releases)): no setup, CPU only,
+English + Chinese by default. To change languages, edit `"languages"` in the
+`config.json` next to the exe (e.g. `["en", "ms"]`) and restart it.
 
 ## Usage
 
@@ -85,7 +107,7 @@ Everything is in the app window (saved to `config.json`, created from
 | Hotkey | Click Set..., press a key |
 | Hold to talk | Unchecked = press once to start, again to stop |
 | Model | `tiny.en`/`tiny` (fastest) → `large-v3` (best). `base.en`/`small.en` are the sweet spots on CPU. `.en` = English-only, bare name = multilingual |
-| Language | English, Chinese, or auto-detect between the two (see below). Picking anything but English auto-switches you off a `.en` model, since those can't recognize other languages at all |
+| Language | Auto-detect between the languages chosen at install, or pin one of them (see below). Picking anything but English auto-switches you off a `.en` model, since those can't recognize other languages at all |
 | Vocabulary | Comma-separated words Whisper should favor (names, jargon). Auto-grows: when AI cleanup fixes a name Whisper misheard, it's added here automatically (capped at 200 entries) |
 | Singlish mode | Adds Singlish particles and loanwords to the prompt when the utterance is English. See below |
 | AI cleanup | Sends transcripts to Claude (`claude-haiku-4-5`) for grammar/filler fixes. Needs `ANTHROPIC_API_KEY`; no longer fully local when enabled. Also powers the vocabulary auto-learning above |
@@ -100,8 +122,9 @@ back to the CPU when it doesn't; `"cuda"` and `"cpu"` force one. Leave
 `"compute_type": null` to get the right default per device (`float16` on GPU,
 `int8` on CPU). The status line and tray tooltip say which one you got.
 
-The GPU path needs the CUDA 12 runtime — `setup.bat` installs it when it sees
-an NVIDIA card, or by hand:
+Setup writes `"auto"` if you choose the GPU and `"cpu"` if you don't (or
+have no NVIDIA card). The GPU path needs the CUDA 12 runtime — setup installs
+it when you choose the GPU, or by hand:
 
 ```powershell
 pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12>=9"
@@ -128,29 +151,30 @@ The GPU also makes bigger models cheaper than `small` on CPU is today:
 
 ### Language detection
 
-Auto-detect chooses between **English and Chinese only**. Whisper's own
-detector ranks all 99 languages and picks the top one; on short or noisy
-speech its runners-up are junk like Welsh or Nynorsk rather than a plausible
-second guess, and if one of those wins, the decoder switches into a language
-you aren't speaking and the whole utterance is lost. Scoring only `en` and
-`zh` turns a misdetection into a coin-flip between the two.
+Auto-detect chooses **only between the languages in `config["languages"]`**
+(picked at install). Whisper's own detector ranks all 99 languages and picks
+the top one; on short or noisy speech its runners-up are junk like Welsh or
+Nynorsk rather than a plausible second guess, and if one of those wins, the
+decoder switches into a language you aren't speaking and the whole utterance
+is lost. Scoring only your languages limits a misdetection to one of them —
+which is also why it's worth enabling only the ones you actually speak.
 
 Detection runs once per utterance (`Transcriber.reset_detection()` on key-down)
 rather than on every live-partial pass — one encoder pass, ~80ms on GPU, and
 the preview can't flip script mid-sentence. Pinning a language in the picker
 skips it entirely. The status line shows what it settled on (`· heard 中文`).
 
-Code-switching is why Chinese needs a **1.5x lead** over English before
-auto-detect switches (`DETECT_ZH_MARGIN`). An English sentence with a few
+Code-switching is why, when English is enabled, any other language needs a
+**1.5x lead** over it before auto-detect switches (`DETECT_NON_EN_MARGIN`). An English sentence with a few
 Mandarin words in it scored `en=0.469` / `zh=0.523` in testing — a plain
 argmax would decode the whole thing as Chinese and lose the English. With the
 margin it stays in English, and Whisper still writes the Chinese span in
 Chinese characters. Genuine Chinese (`zh=0.998` vs `en=0.001`) clears the
-margin easily.
+margin easily. The margin was only measured on English/Chinese; it applies to
+the other languages on the same reasoning, untested.
 
-To add a language back, extend `DETECT_LANGUAGES` in `whisperflow/transcriber.py`
-**and** `LANGUAGE_CHOICES` in `app.py` — the picker and the detector are
-deliberately kept in sync by hand.
+The menu offered at install lives in `LANGUAGE_NAMES` in
+`whisperflow/languages.py`; any Whisper language code can be added there.
 
 ### Singlish
 

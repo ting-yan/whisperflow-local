@@ -40,6 +40,9 @@ from whisperflow.formatter import (
     basic_format, AIFormatter, detect_action, suggest_new_vocab, to_simplified,
 )
 from whisperflow.injector import inject
+from whisperflow.languages import (
+    LANGUAGE_NAMES, configured_languages, short_label,
+)
 from whisperflow.updater import check_for_update
 
 # When frozen by PyInstaller, user files (config, log) live next to the exe;
@@ -57,20 +60,17 @@ MODEL_CHOICES = [
     "medium", "large-v3",
 ]
 
-# Display name -> Whisper language code (None = auto-detect). ".en"-suffixed
-# models are English-only and can't use any entry here except "English".
-#
-# Deliberately just two languages: auto-detect scores exactly these (see
-# DETECT_LANGUAGES in transcriber.py) instead of ranking all 99, where a bad
-# guess lands somewhere useless. Adding a language back means adding it in
-# both places.
-LANGUAGE_CHOICES = [
-    ("Auto-detect (EN/中文)", None),
-    ("English", "en"),
-    ("Chinese", "zh"),
-]
-_LANG_DISPLAY_TO_CODE = dict(LANGUAGE_CHOICES)
-_LANG_CODE_TO_DISPLAY = {code: name for name, code in LANGUAGE_CHOICES}
+
+def language_choices(codes):
+    """(display name, Whisper code) pairs for the picker; None = auto-detect.
+    Built from config["languages"] (chosen at install), and auto-detect only
+    scores those — see whisperflow/languages.py. ".en"-suffixed models are
+    English-only and can't use any entry here except "English"."""
+    choices = [(LANGUAGE_NAMES[c], c) for c in codes]
+    if len(codes) > 1:
+        label = "/".join(short_label(c) for c in codes)
+        choices.insert(0, (f"Auto-detect ({label})", None))
+    return choices
 
 PARTIAL_INTERVAL = 1.2  # seconds between live partial-transcript passes
 MIN_PARTIAL_AUDIO = 0.6  # seconds — skip partial passes on very short buffers
@@ -230,9 +230,11 @@ class App:
         # picking anything else auto-switches to the multilingual model.
         ttk.Label(frame, text="Language:").grid(row=7, column=0,
                                                 sticky="w", **pad)
-        lang_values = [name for name, _ in LANGUAGE_CHOICES]
+        choices = language_choices(configured_languages(self.config))
+        self._lang_display_to_code = dict(choices)
+        lang_values = [name for name, _ in choices]
         current_code = self.config.get("language")
-        current_display = _LANG_CODE_TO_DISPLAY.get(current_code)
+        current_display = {c: n for n, c in choices}.get(current_code)
         if current_display is None:
             current_display = current_code or "Auto-detect"
             if current_display not in lang_values:
@@ -240,7 +242,7 @@ class App:
         self.lang_var = tk.StringVar(value=current_display)
         lang_box = ttk.Combobox(frame, textvariable=self.lang_var,
                                 values=lang_values, state="readonly",
-                                width=14)
+                                width=24)
         lang_box.grid(row=7, column=1, sticky="w", **pad)
         lang_box.bind("<<ComboboxSelected>>", self._on_language_change)
         self.lang_note_var = tk.StringVar(value="")
@@ -450,8 +452,8 @@ class App:
         threading.Thread(target=worker, daemon=True).start()
 
     def _lang_code_for_display(self, display: str):
-        if display in _LANG_DISPLAY_TO_CODE:
-            return _LANG_DISPLAY_TO_CODE[display]
+        if display in self._lang_display_to_code:
+            return self._lang_display_to_code[display]
         return None if display.startswith("Auto-detect") else display
 
     def _on_language_change(self, _event=None):
@@ -476,7 +478,8 @@ class App:
         per partial."""
         language = self.config.get("language")
         if language is None:
-            language = self.transcriber.detect_language(audio)
+            language = self.transcriber.detect_language(
+                audio, configured_languages(self.config))
         singlish = bool(self.config.get("singlish")) and language == "en"
         return language, build_prompt(self.config.get("vocabulary"), singlish)
 
@@ -641,7 +644,7 @@ class App:
         if self.config.get("language") is None:
             heard = getattr(self.transcriber, "detected_language", None)
             if heard:
-                where += f" · heard {'中文' if heard == 'zh' else heard.upper()}"
+                where += f" · heard {short_label(heard)}"
         self._set_tray("idle", f"WhisperFlow Local — {mode} [{key}]{where}")
         self._set_status(f"Ready — {mode} [{key}] to dictate{where}", transcript)
 
