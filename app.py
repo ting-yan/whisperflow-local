@@ -16,7 +16,7 @@ import time
 import webbrowser
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -35,7 +35,7 @@ import pystray
 from PIL import Image, ImageDraw
 
 from whisperflow.recorder import Recorder
-from whisperflow.transcriber import Transcriber
+from whisperflow.transcriber import Transcriber, build_prompt
 from whisperflow.formatter import (
     basic_format, AIFormatter, detect_action, suggest_new_vocab, to_simplified,
 )
@@ -59,21 +59,15 @@ MODEL_CHOICES = [
 
 # Display name -> Whisper language code (None = auto-detect). ".en"-suffixed
 # models are English-only and can't use any entry here except "English".
+#
+# Deliberately just two languages: auto-detect scores exactly these (see
+# DETECT_LANGUAGES in transcriber.py) instead of ranking all 99, where a bad
+# guess lands somewhere useless. Adding a language back means adding it in
+# both places.
 LANGUAGE_CHOICES = [
-    ("Auto-detect", None),
+    ("Auto-detect (EN/中文)", None),
     ("English", "en"),
-    ("Spanish", "es"),
-    ("French", "fr"),
-    ("German", "de"),
-    ("Italian", "it"),
-    ("Portuguese", "pt"),
-    ("Dutch", "nl"),
-    ("Russian", "ru"),
     ("Chinese", "zh"),
-    ("Japanese", "ja"),
-    ("Korean", "ko"),
-    ("Hindi", "hi"),
-    ("Arabic", "ar"),
 ]
 _LANG_DISPLAY_TO_CODE = dict(LANGUAGE_CHOICES)
 _LANG_CODE_TO_DISPLAY = {code: name for name, code in LANGUAGE_CHOICES}
@@ -268,6 +262,15 @@ class App:
                   foreground="#888", wraplength=320).grid(
             row=9, column=1, columnspan=2, sticky="w", padx=10)
 
+        # Singlish toggle — see SINGLISH_TERMS in transcriber.py
+        self.singlish_var = tk.BooleanVar(
+            value=bool(self.config.get("singlish", False)))
+        ttk.Checkbutton(
+            frame,
+            text="Singlish mode (spells lah/leh/shiok/makan/paiseh correctly)",
+            variable=self.singlish_var,
+        ).grid(row=10, column=0, columnspan=3, sticky="w", **pad)
+
         # AI cleanup toggle
         self.ai_var = tk.BooleanVar(
             value=self.config.get("ai_cleanup", {}).get("enabled", False))
@@ -276,11 +279,11 @@ class App:
             text="AI cleanup via Claude (fixes grammar/filler; needs "
                  "ANTHROPIC_API_KEY)",
             variable=self.ai_var,
-        ).grid(row=10, column=0, columnspan=3, sticky="w", **pad)
+        ).grid(row=11, column=0, columnspan=3, sticky="w", **pad)
 
         self.save_btn = ttk.Button(frame, text="Save & Apply",
                                    command=self._save)
-        self.save_btn.grid(row=11, column=0, columnspan=3, pady=(10, 2))
+        self.save_btn.grid(row=12, column=0, columnspan=3, pady=(10, 2))
 
         # Update notice — populated by the background check when a newer
         # GitHub release exists; clicking opens the release page.
@@ -288,7 +291,7 @@ class App:
         self.update_var = tk.StringVar(value="")
         update_lbl = ttk.Label(frame, textvariable=self.update_var,
                                foreground="#0a58ca", cursor="hand2")
-        update_lbl.grid(row=12, column=0, columnspan=3, pady=(0, 2))
+        update_lbl.grid(row=13, column=0, columnspan=3, pady=(0, 2))
         update_lbl.bind("<Button-1>", self._open_update)
 
         ttk.Label(frame, text='Commands: "new line", "new paragraph", '
@@ -296,7 +299,7 @@ class App:
                               '"delete last sentence" — say one alone, '
                               'not mid-sentence',
                   foreground="#888", font=("Segoe UI", 8),
-                  wraplength=360).grid(row=13, column=0, columnspan=3,
+                  wraplength=360).grid(row=14, column=0, columnspan=3,
                                        sticky="w", padx=10, pady=(4, 0))
 
         # Closing the window hides to the tray; quit from the tray menu.
@@ -383,13 +386,13 @@ class App:
             try:
                 self.transcriber = Transcriber(
                     model_size=wanted,
-                    device=self.config.get("device", "cpu"),
-                    compute_type=self.config.get("compute_type", "int8"),
+                    device=self.config.get("device", "auto"),
+                    compute_type=self.config.get("compute_type") or None,
                 )
                 self._loaded_model = wanted
-                key = self.config.get("hotkey", "f8").upper()
-                mode = "Hold" if self.config.get("hold_to_talk", True) else "Press"
-                self._set_status(f"Ready — {mode} [{key}] to dictate")
+                if self.transcriber.load_error:
+                    log_error(f"model load: {self.transcriber.load_error}")
+                self._ready_status()
             except Exception as exc:
                 self._set_status(f"Model failed to load: {exc}")
             finally:
@@ -449,7 +452,7 @@ class App:
     def _lang_code_for_display(self, display: str):
         if display in _LANG_DISPLAY_TO_CODE:
             return _LANG_DISPLAY_TO_CODE[display]
-        return None if display == "Auto-detect" else display
+        return None if display.startswith("Auto-detect") else display
 
     def _on_language_change(self, _event=None):
         lang_code = self._lang_code_for_display(self.lang_var.get())
@@ -464,9 +467,18 @@ class App:
         else:
             self.lang_note_var.set("")
 
-    def _transcribe_args(self):
-        vocab = self.config.get("vocabulary") or []
-        return self.config.get("language"), (", ".join(vocab) if vocab else None)
+    def _transcribe_args(self, audio):
+        """(language, initial_prompt) for this utterance. Auto-detect is
+        resolved here rather than inside transcribe() so the prompt can
+        depend on the answer — the Singlish terms are English-only, and
+        feeding them to a Chinese utterance would just be noise. The result
+        is cached per utterance, so this costs one encoder pass, not one
+        per partial."""
+        language = self.config.get("language")
+        if language is None:
+            language = self.transcriber.detect_language(audio)
+        singlish = bool(self.config.get("singlish")) and language == "en"
+        return language, build_prompt(self.config.get("vocabulary"), singlish)
 
     # ------------------------------------------------------- push-to-talk
     # The keyboard hooks fire on the hook thread, but WASAPI streams can
@@ -498,6 +510,7 @@ class App:
             log_error("mic open failed")
             self._set_status(f"Mic error: {exc}")
             return
+        self.transcriber.reset_detection()  # detect once per utterance
         _beep(880)
         self._set_tray("rec", "WhisperFlow Local — RECORDING")
         self._set_status("Recording... (release to transcribe)")
@@ -515,7 +528,7 @@ class App:
             audio = self.recorder.peek()
             if audio.size < int(MIN_PARTIAL_AUDIO * 16000):
                 continue
-            language, prompt = self._transcribe_args()
+            language, prompt = self._transcribe_args(audio)
             try:
                 text = self.transcriber.transcribe(
                     audio, language=language, initial_prompt=prompt,
@@ -540,7 +553,7 @@ class App:
     def _process(self, audio):
         try:
             self._set_status("Transcribing...")
-            language, prompt = self._transcribe_args()
+            language, prompt = self._transcribe_args(audio)
             raw_text = self.transcriber.transcribe(
                 audio, language=language, initial_prompt=prompt)
             if not raw_text:
@@ -569,6 +582,10 @@ class App:
                 if added:
                     learned_note = f"  [learned: {', '.join(added)}]"
                 text = cleaned
+            # Trailing space after sentence-ending punctuation so the next
+            # dictation doesn't butt up against this one ("end.Next").
+            if text and text[-1] in ".!?":
+                text += " "
             inject(text, mode=self.config.get("paste_mode", "paste"))
             self._last_injected_text = text
             self._ready_status(transcript=text + learned_note)
@@ -589,6 +606,8 @@ class App:
             return
         sentences.pop()
         remaining = " ".join(sentences)
+        if remaining:
+            remaining += " "  # keep the separator before the next dictation
         delete_count = len(prev) - len(remaining)
         for _ in range(delete_count):
             keyboard.send("backspace")
@@ -613,8 +632,18 @@ class App:
     def _ready_status(self, transcript=None):
         key = self.config.get("hotkey", "f8").upper()
         mode = "Hold" if self.config.get("hold_to_talk", True) else "Press"
-        self._set_tray("idle", f"WhisperFlow Local — {mode} [{key}]")
-        self._set_status(f"Ready — {mode} [{key}] to dictate", transcript)
+        # Say which device the model landed on — "auto" can silently fall
+        # back to the CPU, and that shows up as a 5x slower transcription.
+        dev = getattr(self.transcriber, "device", None)
+        where = " (GPU)" if dev == "cuda" else " (CPU)" if dev == "cpu" else ""
+        # In auto mode, say which of the two languages it settled on — a
+        # wrong guess otherwise looks like the model just got worse.
+        if self.config.get("language") is None:
+            heard = getattr(self.transcriber, "detected_language", None)
+            if heard:
+                where += f" · heard {'中文' if heard == 'zh' else heard.upper()}"
+        self._set_tray("idle", f"WhisperFlow Local — {mode} [{key}]{where}")
+        self._set_status(f"Ready — {mode} [{key}] to dictate{where}", transcript)
 
     # ---------------------------------------------------------------- save
 
@@ -626,6 +655,7 @@ class App:
         self.config["hold_to_talk"] = self.hold_var.get()
         self.config["model_size"] = self.model_var.get()
         self.config["language"] = self._lang_code_for_display(self.lang_var.get())
+        self.config["singlish"] = self.singlish_var.get()
         self.config["vocabulary"] = [
             w.strip() for w in self.vocab_var.get().split(",") if w.strip()]
         self.config.setdefault("ai_cleanup", {})

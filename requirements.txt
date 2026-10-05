@@ -7,3 +7,8 @@ pystray>=0.19
 pillow>=10.0
 opencc-python-reimplemented>=0.1.7  # normalizes Chinese output to Simplified
 anthropic>=0.40  # optional — only needed if ai_cleanup.enabled is true
+
+# GPU (optional, ~700 MB) — CTranslate2 needs the CUDA 12 runtime to use an
+# NVIDIA card. setup.ps1 installs these automatically when it finds one; with
+# "device": "auto" the app uses the GPU if they're present and the CPU if not.
+#   pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12>=9"

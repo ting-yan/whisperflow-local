@@ -29,6 +29,16 @@ Write-Host "Installing dependencies (this can take a minute)..." -ForegroundColo
 & $py -m pip install -r requirements.txt --quiet --disable-pip-version-check
 if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
+# CUDA 12 runtime, only where there is a card to use it. faster-whisper runs
+# ~5x faster on the GPU; without these wheels it silently stays on the CPU.
+if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
+    Write-Host "NVIDIA GPU detected - installing CUDA runtime (~700 MB, one-time)..." -ForegroundColor Cyan
+    & $py -m pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12>=9" --quiet --disable-pip-version-check
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "CUDA runtime install failed - the app will run on the CPU." -ForegroundColor Yellow
+    }
+}
+
 # --- Shortcuts -----------------------------------------------------------
 # Best-effort: some machines block .lnk writes to Desktop (Controlled Folder
 # Access, antivirus). That should not stop setup - deps are already
