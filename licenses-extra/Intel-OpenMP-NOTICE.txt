@@ -1,0 +1,11 @@
+Intel(R) OpenMP* Runtime Library (libiomp5md.dll)
+
+Shipped unmodified inside the CTranslate2 Python wheel
+(ctranslate2/libiomp5md.dll) and redistributed here as part of it.
+
+The Intel OpenMP runtime is a redistributable component of Intel's compiler
+and oneAPI runtimes, and is also published by Intel as open source under the
+BSD 3-Clause License. Copyright (c) Intel Corporation. All rights reserved.
+
+Intel's redistribution terms: https://www.intel.com/content/www/us/en/developer/articles/license/end-user-license-agreement.html
+Open-source release: https://github.com/llvm/llvm-project/tree/main/openmp

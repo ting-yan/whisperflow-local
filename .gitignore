@@ -4,5 +4,4 @@ config.json
 whisperflow.log
 build/
 dist/
-*.spec
 *.zip
